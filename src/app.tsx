@@ -19,7 +19,8 @@ export default function App() {
   const [bearing, setBearing] = React.useState(initialBearing);
   const [markers, setMarkers] = React.useState([]);
   const [polygon, setPolygon] = React.useState(null);
-  const [circle, setCircle] = React.useState(null); // Добавлено состояние для круга
+  const [circle, setCircle] = React.useState(null);
+  const [circleAll, setCircleAll] = React.useState(null); 
   const [loading, setLoading] = React.useState(false); // Добавлено состояние для загрузки
 
   const handleInputChange = (event) => {
@@ -49,9 +50,13 @@ export default function App() {
 
   const handleCalculate = async () => {
     setLoading(true); // Устанавливаем состояние загрузки в true
+    if (radius != null) {
+      const circleFeature = turf.circle(center, radius, { steps: 256, units: 'meters' });
+      setCircleAll(circleFeature);
+    }
     if (corner >= 0) {
       const radSlepoyZoni = Math.tan(corner * (Math.PI / 180)) * height;
-      const circleFeature = turf.circle(center, radSlepoyZoni, { steps: 64, units: 'meters' });
+      const circleFeature = turf.circle(center, radSlepoyZoni, { steps: 256, units: 'meters' });
       setCircle(circleFeature);
     }
     const newMarkers = [];
@@ -74,17 +79,18 @@ export default function App() {
       }
     }
     setMarkers(newMarkers);
-
-    const greenMarkers = newMarkers.filter(marker => marker.elevation <= height).map(marker => marker.coordinates);
-
-    if (greenMarkers.length >= 4) {
-      const closedGreenMarkers = [...greenMarkers, greenMarkers[0]];
-      const polygonFeature = turf.polygon([closedGreenMarkers]);
+  
+    // Создание полигона из всех маркеров
+    const allMarkers = newMarkers.map(marker => marker.coordinates);
+  
+    if (allMarkers.length >= 4) {
+      const closedAllMarkers = [...allMarkers, allMarkers[0]];
+      const polygonFeature = turf.polygon([closedAllMarkers]);
       setPolygon(polygonFeature);
     } else {
       setPolygon(null);
     }
-
+  
     setLoading(false); // Устанавливаем состояние загрузки в false
   };
 
@@ -136,6 +142,18 @@ export default function App() {
             paint={{
               "fill-color": "#ff0000",
               "fill-opacity": 0.4,
+            }}
+          />
+        </Source>
+      )}
+      {circleAll && (
+        <Source type="geojson" data={circleAll}>
+          <Layer
+            id="circle-layerall"
+            type="fill"
+            paint={{
+              "fill-color": "#ff0000",
+              "fill-opacity": 0.3,
             }}
           />
         </Source>
