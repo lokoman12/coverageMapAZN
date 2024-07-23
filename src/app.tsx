@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import MapGL, { Layer, Marker, Source } from "react-map-gl";
+import MapGL, { Layer, Marker, Popup, Source } from "react-map-gl";
 import * as turf from "@turf/turf";
 import { Box, Button, TextField, CircularProgress } from "@mui/material";
 import axios from "axios";
@@ -9,19 +9,20 @@ const MAPBOX_TOKEN = "pk.eyJ1IjoiZWxpc2VpMTIiLCJhIjoiY2xzYnJjMmF4MDVzNDJrbzRscGx
 
 const initialCenter = [30.281996992887677, 59.79052973571955];
 const initialDistance = 100; // расстояние в метрах
-const initialBearing = Array.from({ length: 36 }, (_, i) => i * 10); // углы от 0 до 350 с шагом 10
 
 export default function App() {
   const [center, setCenter] = React.useState(initialCenter);
   const [radius, setRadius] = React.useState(100);
   const [height, setHeight] = React.useState(0);
   const [corner, setCorner] = React.useState(10);
-  const [bearing, setBearing] = React.useState(initialBearing);
+  const [bearingStep, setBearingStep] = React.useState(10);
+  const [bearing, setBearing] = React.useState(Array.from({ length: 360 / bearingStep }, (_, i) => i * bearingStep));
   const [markers, setMarkers] = React.useState([]);
   const [polygon, setPolygon] = React.useState(null);
-  const [circle, setCircle] = React.useState(null);
-  const [circleAll, setCircleAll] = React.useState(null); 
+  const [circle, setCircle] = React.useState(null); // Добавлено состояние для круга
+  const [circleAll, setCircleAll] = React.useState(null);
   const [loading, setLoading] = React.useState(false); // Добавлено состояние для загрузки
+  const [selectedMarker, setSelectedMarker] = React.useState(null); // Состояние для выбранного маркера
 
   const handleInputChange = (event) => {
     const { id, value } = event.target;
@@ -45,23 +46,25 @@ export default function App() {
       }
     } else if (id === "corner") {
       setCorner(parseFloat(value));
+    } else if (id === "bearingStep") {
+      const newBearingStep = parseFloat(value);
+      setBearingStep(newBearingStep);
+      setBearing(Array.from({ length: 360 / newBearingStep }, (_, i) => i * newBearingStep));
     }
   };
 
   const handleCalculate = async () => {
-    setLoading(true); // Устанавливаем состояние загрузки в true
+    setLoading(true);
     if (radius != null) {
       const circleFeature = turf.circle(center, radius, { steps: 256, units: 'meters' });
       setCircleAll(circleFeature);
     }
-    if (corner >= 0) {
-      const radSlepoyZoni = Math.tan(corner * (Math.PI / 180)) * height;
-      const circleFeature = turf.circle(center, radSlepoyZoni, { steps: 256, units: 'meters' });
-      setCircle(circleFeature);
-    }
+    
     const newMarkers = [];
+    const vertices = [];
     for (let dir of bearing) {
       let pointAboveHeight = false;
+      let lastMarker = null;
       for (let dist = initialDistance; dist <= radius && !pointAboveHeight; dist += initialDistance) {
         const marker = turf.destination(center, dist, dir, { units: "meters" }).geometry.coordinates;
         try {
@@ -69,29 +72,36 @@ export default function App() {
           const elevation = response.data.results[0].elevation;
           const markerData = { coordinates: marker, elevation };
           newMarkers.push(markerData);
+          lastMarker = markerData;
           if (elevation > height) {
             pointAboveHeight = true;
+            vertices.push(marker);
           }
         } catch (error) {
           console.error(`Error fetching elevation data: ${error.message}`);
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+      if (!pointAboveHeight && lastMarker) {
+        vertices.push(lastMarker.coordinates);
+      }
     }
     setMarkers(newMarkers);
   
-    // Создание полигона из всех маркеров
-    const allMarkers = newMarkers.map(marker => marker.coordinates);
-  
-    if (allMarkers.length >= 4) {
-      const closedAllMarkers = [...allMarkers, allMarkers[0]];
-      const polygonFeature = turf.polygon([closedAllMarkers]);
+    // Создание полигона из вершин
+    if (vertices.length >= 3) {
+      const closedVertices = [...vertices, vertices[0]];
+      const polygonFeature = turf.polygon([closedVertices]);
       setPolygon(polygonFeature);
     } else {
       setPolygon(null);
     }
-  
-    setLoading(false); // Устанавливаем состояние загрузки в false
+    if (corner >= 0) {
+      const radSlepoyZoni = Math.tan(corner * (Math.PI / 180)) * height;
+      const circleFeature = turf.circle(center, radSlepoyZoni, { steps: 256, units: 'meters' });
+      setCircle(circleFeature);
+    }
+    setLoading(false);
   };
 
   return (
@@ -105,7 +115,7 @@ export default function App() {
       mapStyle="mapbox://styles/mapbox/dark-v9"
       mapboxAccessToken={MAPBOX_TOKEN}
     >
-      {markers.map((marker, index) => (
+      {markers.filter((it) => it.elevation > height).map((marker, index) => (
         <Marker
           key={index}
           latitude={marker.coordinates[1]}
@@ -113,15 +123,30 @@ export default function App() {
         >
           <div
             style={{
-              background: marker.elevation > height ? "red" : "green",
+              background: "red",
               borderRadius: "50%",
               width: "10px",
               height: "10px",
             }}
+            
           />
+          <Popup key={index}
+          latitude={marker.coordinates[1]}
+          longitude={marker.coordinates[0]}>{marker.elevation}</Popup>
         </Marker>
       ))}
-      {center && <Marker latitude={center[1]} longitude={center[0]} />}
+      {circleAll && (
+        <Source type="geojson" data={circleAll}>
+          <Layer
+            id="circle-layerAll"
+            type="fill"
+            paint={{
+              "fill-color": "#808080",
+              "fill-opacity": 0.4,
+            }}
+          />
+        </Source>
+      )}
       {polygon && (
         <Source type="geojson" data={polygon}>
           <Layer
@@ -129,7 +154,7 @@ export default function App() {
             type="fill"
             paint={{
               "fill-color": "#00ff00",
-              "fill-opacity": 0.4,
+              "fill-opacity": 0.8,
             }}
           />
         </Source>
@@ -141,19 +166,7 @@ export default function App() {
             type="fill"
             paint={{
               "fill-color": "#ff0000",
-              "fill-opacity": 0.4,
-            }}
-          />
-        </Source>
-      )}
-      {circleAll && (
-        <Source type="geojson" data={circleAll}>
-          <Layer
-            id="circle-layerall"
-            type="fill"
-            paint={{
-              "fill-color": "#ff0000",
-              "fill-opacity": 0.3,
+              "fill-opacity": 0.8,
             }}
           />
         </Source>
@@ -207,6 +220,13 @@ export default function App() {
           label="Угол РЛС"
           id="corner"
           value={corner}
+          onChange={handleInputChange}
+        />
+        <TextField
+          fullWidth
+          label="Шаг углов"
+          id="bearingStep"
+          value={bearingStep}
           onChange={handleInputChange}
         />
         <Button variant="contained" onClick={handleCalculate} disabled={loading}>
